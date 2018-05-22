@@ -1,0 +1,378 @@
+<?php
+class Penilaian extends CI_Controller {
+	protected $id_pegawai;
+	protected $periode;
+	protected $bulan;
+	
+	public $npwp;
+	public $kdlayer;
+	public $nilai_p1;
+	public $nilai_p2;
+	public $grade_p1;
+	public $grade_p2;
+	public $grade_total_remun;
+	//kehadiran
+	public $jml_hari;
+	public $jml_hadir;
+	public $jml_terlambat;
+	public $skor_remun;
+	public $nilai_remun;
+	//kinerja
+	public $capaian_kinerja;
+	public $skor_kinerja;
+	public $nilai_kinerja;
+	//perilaku
+	public $angka_perilaku;
+	public $skor_perilaku;
+	public $nilai_perilaku;
+	
+	public $total_nilai;
+	public $gol_pegawai;
+	public $pangkat_pegawai;
+	public $pajak_gol;
+	public $pegawai_kontrak= FALSE;
+	public $potongan_kontrak= 50;
+	public $potongan_skp;
+	public $nm_hukuman_disiplin;
+	public $potongan_hukuman;
+	
+	function __construct($id_pegawai=null, $periode=null, $bulan=null) {
+		parent::__construct();
+        $this->view = $this->s00_lib_output;
+        $this->api = $this->load->library('s00_lib_api');
+        $this->url = $this->load->library('lib_url');
+        $this->user = $this->load->library('lib_user', $this->session->all_userdata());
+        $this->util = $this->load->library('lib_util');
+        $this->lib_skp = $this->load->library('lib_skp'); 
+        $this->lib_remun = $this->load->library('lib_remun'); 
+        $this->simpeg = $this->load->module('remunerasi/simpeg');
+        
+        $this->id_pegawai	= $id_pegawai ? $id_pegawai : '';
+        $this->periode		= $periode ? $periode : '';
+        $this->bulan		= $bulan ? $bulan : '';
+        
+		if (!$this->user->is_login()) {
+			redirect();
+		}
+
+		error_reporting(0);
+	}
+
+	function set_id_pegawai($id_pegawai){
+        $this->id_pegawai	= $id_pegawai;
+	}
+	
+	function set_periode($periode){
+        $this->periode	= $periode;
+	}
+	
+	function set_bulan($bulan){
+        $this->bulan	= $bulan;
+	}	
+	
+	function perilaku($id_pegawai=null, $periode=null, $bulan=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		$bulan		= (!empty($bulan)) ? $bulan : $this->bulan;
+		
+		return $this->api->post($this->url->remun . '/perilaku_pegawai/' . $id_pegawai . '/' . $periode . '/' . $bulan);		
+	}
+	
+	function kehadiran($id_pegawai=null, $periode=null, $bulan=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		$bulan		= (!empty($bulan)) ? $bulan : $this->bulan;
+		return $this->api->post($this->url->remun . '/kehadiran_pegawai', array('ID_PEGAWAI'=> $id_pegawai, 'TAHUN'=>$periode, 'BULAN'=>$bulan));
+	}
+	
+	function grade_remun_pegawai($id_pegawai=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		return $this->api->post($this->url->remun . '/grade_pegawai', array('ID_PEGAWAI'=>$id_pegawai));
+	}
+
+	//lkp
+	function kinerja($id_pegawai=null, $periode=null, $bulan=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		$bulan		= (!empty($bulan)) ? $bulan : $this->bulan;
+		
+		$wn['TABLE'] 				= "PENILAIAN_LKP";
+		$wn['WHERE']['ID_LKP'] 		= $id_pegawai . $periode . intval($bulan);
+        return $this->api->post($this->url->skp . '/get_data', $wn);
+	}
+	
+	function skp_sebelum_periode($id_pegawai=null, $periode=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		
+        $par	= array('ID_PEGAWAI'=>$id_pegawai, 'TAHUN'=>$periode-1);
+        return $this->api->post($this->url->remun . '/nilai_skp_remun', $par);
+	}
+	
+	function hukuman_disiplin($id_pegawai=null, $periode=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+
+		$par	= array("ID_PEGAWAI"=>$id_pegawai, $periode=>"TO_CHAR(TGL_HUKUMAN, 'YYYY')");
+        $data	= $this->api->post($this->url->remun . '/hukuman_disiplin', $par);
+        //print_r( $data );
+        return $data;
+	}
+	
+	function detail_hukuman_disiplin($id_pegawai=null, $periode=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+
+		$format 	= 'd-m-Y';
+		$sekarang	= strtotime(date($format));
+		
+		$detail['TERHUKUM']		= FALSE;
+		$detail['KD_HUKUMAN']	= NULL;
+		$detail['NM_HUKUMAN']	= NULL;
+		$detail['POTONGAN']		= NULL;
+		$detail['TGL_BERLAKU']	= NULL;
+		$detail['TGL_BERAKHIR']	= NULL;
+		$detail['DETAIL']		= array();
+		
+		$hukuman = $this->hukuman_disiplin($id_pegawai, $periode);
+		for($i=0;$i<count($hukuman);$i++){
+			
+			$awal 	= date_create_from_format('d'. $slash . 'm' . $slash . 'Y', $hukuman[$i]['TGL_BERLAKU_HUKUMAN']);
+			$akhir 	= date_create_from_format('d'. $slash . 'm' . $slash . 'Y', $hukuman[$i]['TGL_BERAKHIR_HUKUMAN']);
+			/* 
+			$tgl_awal	= strtotime($awal->format($format));
+			$tgl_akhir	= strtotime($akhir->format($format));
+			*/
+			/*
+			$tgl_awal	= strtotime(date_format($awal,$format));
+			$tgl_akhir	= strtotime(date_format($akhir,$format));
+			*/
+			
+			$tgl_awal	= strtotime($hukuman[$i]['TGL_BERLAKU_HUKUMAN']);
+			$tgl_akhir	= strtotime($hukuman[$i]['TGL_BERAKHIR_HUKUMAN']);
+			
+			//echo "$sekarang - $tgl_awal - $tgl_akhir<br>";
+			$terhukum	= (($sekarang >= $tgl_awal) && ($sekarang <= $tgl_akhir)) || !$detail['TERHUKUM'];
+			if($terhukum){
+				$detail['TERHUKUM']	= $terhukum;
+				$detail['KD_HUKUMAN']	= $hukuman[$i]['KD_HUKUMAN'];
+				$detail['NM_HUKUMAN']	= $this->lib_remun->nm_hukuman_disiplin($hukuman[$i]['KD_HUKUMAN']);
+				$detail['TGL_BERLAKU']	= $hukuman[$i]['TGL_BERLAKU_HUKUMAN'];
+				$detail['TGL_BERAKHIR']	= $hukuman[$i]['TGL_BERAKHIR_HUKUMAN'];
+				$detail['POTONGAN']		= $hukuman[$i]['POTONGAN_REMUN'];
+			}
+			
+			$detail['DETAIL'][$i]=$hukuman[$i];
+			$detail['DETAIL'][$i]['NM_HUKUMAN']	= $this->lib_remun->nm_hukuman_disiplin($hukuman[$i]['KD_HUKUMAN']);
+			
+		}
+		
+		//print_r( $detail );
+		return $detail;
+	}
+	
+	function set_pegawai($id_pegawai=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+
+		$pangkat	= $this->simpeg->simpeg_pangkat_pegawai($id_pegawai);
+		$this->gol_pegawai		= $pangkat['HIE_GOLONGAN'];
+		$this->pangkat_pegawai	= $pangkat['HIE_RUANG'];
+		$this->pajak_gol		= $this->lib_remun->pajak_gol($this->gol_pegawai);
+		$this->pegawai_kontrak	= (empty($this->gol_pegawai)) || (substr($id_pegawai, 8, 6) === '000000'); //jika golongan kosong dia pegawai kontrak
+	}
+	
+	function set_skp($id_pegawai=null, $periode=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+
+		$skp 		= $this->skp_sebelum_periode($id_pegawai, $periode);
+		$nilai_ 	= 4;
+		$terbilang 	= 'BAIK';
+		$this->potongan_skp	= 0;
+		if (!empty($skp)){
+			$nilai_		= $skp[0]['NILAI'];
+			switch ($nilai_){
+				case 1: $terbilang = 'BURUK'; break;
+				case 2: $terbilang = 'KURANG'; break;
+				case 3: $terbilang = 'CUKUP'; break;
+				default: $terbilang = 'BAIK'; break;
+			}
+			$this->potongan_skp		= $skp[0]['PERSEN_POTONGAN'];
+		}
+	}
+	
+	function set_kinerja($id_pegawai=null, $periode=null, $bulan=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		$bulan		= (!empty($bulan)) ? $bulan : $this->bulan;
+
+		$kinerja	= $this->kinerja($id_pegawai, $periode, $bulan);
+		
+		// $this->skor_kinerja		= $this->lib_remun->skor_kinerja($kinerja[0]['NILAI_CAPAIAN']);
+		// $this->nilai_kinerja 	= $this->lib_remun->nilai_kinerja($kinerja[0]['NILAI_CAPAIAN']); // . '%';
+
+		$this->capaian_kinerja 	= (!empty($kinerja)) ? $kinerja[0]['NILAI_CAPAIAN'] : 0;
+		$this->skor_kinerja		= $this->lib_remun->skor_kinerja($this->capaian_kinerja);
+		$this->nilai_kinerja 	= $this->lib_remun->nilai_kinerja($this->capaian_kinerja); // . '%';
+	}
+	
+	function set_perilaku($id_pegawai=null, $periode=null, $bulan=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		$bulan		= (!empty($bulan)) ? $bulan : $this->bulan;
+
+		$perilaku 	= $this->perilaku($id_pegawai, $periode, $bulan);
+		
+		$nilai		= 0;
+		for($i=0;$i<count($perilaku);$i++){
+			$nilai	= $nilai + $perilaku[$i]['SKOR'];
+		}
+
+		//$komponen_nilai = 10;
+		//$perhitungan 	= $nilai/$komponen_nilai;
+
+		// $this->skor_perilaku 	= $this->lib_remun->skor_perilaku($nilai);
+		// $this->nilai_perilaku 	= $this->lib_remun->nilai_perilaku($nilai); // . '%'; 
+
+		$this->angka_perilaku	= $nilai;
+		$this->skor_perilaku 	= $this->lib_remun->skor_perilaku($this->angka_perilaku);
+		$this->nilai_perilaku 	= $this->lib_remun->nilai_perilaku($this->angka_perilaku); // . '%'; 
+	}
+	
+	function set_kehadiran($id_pegawai=null, $periode=null, $bulan=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		$bulan		= (!empty($bulan)) ? $bulan : $this->bulan;
+
+		$kehadiran		= $this->kehadiran($id_pegawai, $periode, $bulan);
+		
+		$this->jml_hari 		= isset($kehadiran[0]['JML_HARI']) ? $kehadiran[0]['JML_HARI']: '0';
+		$this->jml_hadir		= isset($kehadiran[0]['JML_HADIR']) ? $kehadiran[0]['JML_HADIR']: '0';
+		$this->jml_terlambat	= isset($kehadiran[0]['JML_TELAT']) ? $kehadiran[0]['JML_TELAT']: '0';
+		
+		$this->skor_remun 	= $this->lib_remun->skor_remun($this->jml_hari, $this->jml_hadir, $this->jml_terlambat);
+		$this->nilai_remun 	= $this->lib_remun->nilai_remun($this->jml_hari, $this->jml_hadir, $this->jml_terlambat); // . '%';
+	}
+	
+	function set_hukuman($id_pegawai=null, $periode=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+
+		$hukuman 	= $this->detail_hukuman_disiplin($id_pegawai, $periode);
+		$this->nm_hukuman_disiplin = $hukuman['NM_HUKUMAN'];
+		$this->potongan_hukuman = $hukuman['POTONGAN'];
+	}
+	
+	function set_total_nilai(){
+		$this->total_nilai 	= $this->nilai_remun + $this->nilai_kinerja + $this->nilai_perilaku;
+	}
+	
+	function set_nominal_grade($id_pegawai=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		
+		$grade_remun 	= $this->grade_remun_pegawai($id_pegawai);
+		
+		$this->nilai_p1 			= (!$this->pegawai_kontrak) ? $grade_remun[0]['P1'] : ($this->potongan_kontrak/100) * $grade_remun[0]['P1'];
+		$this->nilai_p2 			= (!$this->pegawai_kontrak) ? $grade_remun[0]['P2'] : ($this->potongan_kontrak/100) * $grade_remun[0]['P2'];
+		$this->nilai_p1				= round($this->nilai_p1, 2);
+		$this->nilai_p2				= round($this->nilai_p2, 2);
+		$this->kdlayer	 			= $grade_remun[0]['KD_LAYER'];
+		$this->grade_p1 			= $grade_remun[0]['P1'];
+		$this->grade_p2 			= $grade_remun[0]['P2'];
+		$this->grade_total_remun 	= $grade_remun[0]['TOTAL_REMUN'];
+	}
+	
+	function hitung($id_pegawai=null, $periode=null, $bulan=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		$bulan		= (!empty($bulan)) ? $bulan : $this->bulan;
+
+		if ( empty($id_pegawai) || empty($periode) || empty($bulan) ){
+			return FALSE;
+		} else {
+			$this->set_skp($id_pegawai, $periode);
+			$this->set_kinerja($id_pegawai, $periode, $bulan);
+			$this->set_perilaku($id_pegawai, $periode, $bulan);
+			$this->set_kehadiran($id_pegawai, $periode, $bulan);
+			$this->set_hukuman($id_pegawai, $periode);
+			$this->set_nominal_grade($id_pegawai);
+			$this->set_total_nilai();
+			return true;
+		}
+	}
+	
+	function simpan_penerimaan_remun($id_pegawai=null, $periode=null, $bulan=null){
+		$id_pegawai	= (!empty($id_pegawai)) ? $id_pegawai : $this->id_pegawai;
+		$periode	= (!empty($periode)) ? $periode : $this->periode;
+		$bulan		= (!empty($bulan)) ? $bulan : $this->bulan;
+		
+		$this->set_pegawai($id_pegawai);
+		
+/* 		$this->set_skp($id_pegawai, $periode);
+		$this->set_kinerja($id_pegawai, $periode, $bulan);
+		$this->set_perilaku($id_pegawai, $periode, $bulan);
+		$this->set_kehadiran($id_pegawai, $periode, $bulan);
+		$this->set_hukuman($id_pegawai, $periode);
+		$this->set_nominal_grade($id_pegawai);
+		$this->set_total_nilai();
+ */		
+ 
+		$this->hitung($id_pegawai, $periode, $bulan);
+ 
+		//perhitungan P1
+		$nilai_pajak_p1 = ($this->pajak_gol !=0) ? ($this->pajak_gol/100) * $this->nilai_p1 : '0';
+		$nilai_pajak_p1	= round($nilai_pajak_p1, 2);
+		$penerimaan_p1 	= ($this->pajak_gol !=0) ? $this->nilai_p1 - $nilai_pajak_p1 : $this->nilai_p1;
+		//perhitungan P2
+		$nominal_perhitungan_p2 = $this->nilai_p2 * ($this->total_nilai/100); //100=persen
+		$nominal_perhitungan_p2 = round($nominal_perhitungan_p2, 2);
+		//potongan A
+		$nilai_potongan_skp = ($this->potongan_skp/100) * $nominal_perhitungan_p2;
+		$nilai_potongan_skp	= round($nilai_potongan_skp, 2);
+		$nominal_p2_setelah_potongan_A = $nominal_perhitungan_p2 - $potongan_A;
+		//potongan B
+		$nominal_potongan_hukuman = ($this->potongan_hukuman/100) * $nominal_p2_setelah_potongan_A;
+		$nominal_potongan_hukuman = round($nominal_potongan_hukuman, 2);
+		$nominal_p2_setelah_potongan_B = $nominal_p2_setelah_potongan_A - $nominal_potongan_hukuman;
+		//pajak
+		$nilai_pajak_p2 	= ($this->pajak_gol !=0) ? ($this->pajak_gol/100) * $nominal_p2_setelah_potongan_B : '0';
+		$nilai_pajak_p2		= round($nilai_pajak_p2, 2);
+		$penerimaan_p2 		= ($this->pajak_gol !=0) ? $nominal_p2_setelah_potongan_B - $nilai_pajak_p2 : $nominal_p2_setelah_potongan_B;
+		$total_penerimaan 	= $penerimaan_p1 + $penerimaan_p2;
+		
+		
+		/*field
+		"PERIODE", "BULAN", "ID_PEGAWAI", "P1", "PAJAK_P1", "NOMINAL_PAJAK_P1", "P2", 
+		"POT_A_P2", "NOMINAL_POT_A_P2", "POT_B_P2", "NOMINAL_POT_B_P2", "PAJAK_P2", 
+		"NOMINAL_PAJAK_P2", "TOTAL_TERIMA", "GOL_PANGKAT", "KD_LAYER", "PEROLEHAN_P2"
+		*/
+		
+		
+		$par	= array(
+						"PERIODE"				=> $periode, 
+						"BULAN"					=> $bulan, 
+						"ID_PEGAWAI"			=> $id_pegawai, 
+						"P1"					=> $this->nilai_p1, 
+						"PAJAK_P1"				=> $this->pajak_gol, 
+						"NOMINAL_PAJAK_P1"		=> $nilai_pajak_p1, 
+						"P2"					=> $this->nilai_p2, 
+						"POT_A_P2"				=> $this->potongan_skp, 
+						"NOMINAL_POT_A_P2"		=> $nilai_potongan_skp, 
+						"POT_B_P2"				=> $this->potongan_hukuman, 
+						"NOMINAL_POT_B_P2"		=> $nominal_potongan_hukuman, 
+						"PAJAK_P2"				=> $this->pajak_gol, 
+						"NOMINAL_PAJAK_P2"		=> $nilai_pajak_p2, 
+						"TOTAL_TERIMA"			=> $total_penerimaan,
+						"GOL_PANGKAT"			=> $this->gol_pegawai . '/' . $this->pangkat_pegawai,
+						"KD_LAYER"				=> $this->kdlayer,		// GRADE
+						"PEROLEHAN_P2"			=> $nominal_perhitungan_p2,
+						"NILAI_KINERJA"			=> $this->total_nilai
+						);
+		
+        $data	= $this->api->post($this->url->remun . '/simpan_penerimaan_remun', $par);
+        
+        //$data 	= $par;
+        return $data;
+	}
+}
+?>
